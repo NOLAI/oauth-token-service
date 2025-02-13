@@ -1,0 +1,12 @@
+[package]
+name = "authentik_token_connector"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+oauth2 = { version = "5.0.0", features = ["reqwest", "rustls-tls", "reqwest-blocking"] }
+base64 = "0.22.1"
+thiserror = "1.0.69"
+tokio = {version = "1", features = ["full"]}
+async-trait = "0.1"
+log = "0.4.25"
