@@ -9,12 +9,11 @@ use base64::engine::general_purpose::URL_SAFE;
 use oauth2::basic::{BasicClient, BasicTokenResponse};
 use oauth2::{reqwest, AccessToken, AuthUrl, ClientId, ClientSecret, HttpClientError, RequestTokenError, Scope, TokenResponse, TokenUrl};
 use tokio::sync::Mutex;
-use crate::AuthentikError::TokenError;
 
 #[derive(Debug, thiserror::Error)]
-pub enum AuthentikError {
+pub enum OauthError {
     #[error(transparent)]
-    TokenError(#[from] Err),
+    TokenError(#[from] Box<dyn Error>),
     #[error(transparent)]
     NetworkError(#[from] HttpClientError<reqwest::Error>),
 }
@@ -28,7 +27,7 @@ pub struct TokenInfo {
 
 /// A connector to the identity service that auto-renews its token when expired
 #[derive(Debug, Clone)]
-pub struct AuthentikTokenConnector {
+pub struct OauthTokenConnector {
     token_info: Arc<Mutex<TokenInfo>>,
 }
 
@@ -39,7 +38,7 @@ pub struct AuthentikConfig {
     pub client_id: String,
 }
 
-impl AuthentikTokenConnector {
+impl OauthTokenConnector {
     fn get_config() -> AuthentikConfig {
         AuthentikConfig {
             base_identity_url: std::env::var("IDENTITY_URL").expect("IDENTITY_URL not set"),
@@ -48,19 +47,19 @@ impl AuthentikTokenConnector {
             client_id: std::env::var("IDENTITY_CLIENT_ID").expect("IDENTITY_CLIENT_ID not set"),
         }
     }
-    pub async fn new() -> Result<Self, AuthentikError> {
+    pub async fn new() -> Result<Self, OauthError> {
         let token_info = Self::initialize_service().await?;
         Ok(Self {
             token_info: Arc::new(Mutex::new(token_info))
         })
     }
 
-    async fn initialize_service() -> Result<TokenInfo, AuthentikError> {
+    async fn initialize_service() -> Result<TokenInfo, OauthError> {
         let token = Self::perform_login().await?;
 
         let expires_at = SystemTime::now() +
             Duration::from_secs(token.expires_in()
-                .ok_or_else(|| TokenError("Token has no duration".to_string()))?
+                .ok_or_else(|| OauthError::TokenError("Token has no duration".to_string().into()))?
                 .as_secs());
 
         Ok(TokenInfo {
@@ -69,7 +68,7 @@ impl AuthentikTokenConnector {
         })
     }
 
-    async fn perform_login() -> Result<BasicTokenResponse, AuthentikError> {
+    async fn perform_login() -> Result<BasicTokenResponse, OauthError> {
         let config = Self::get_config();
         let client_secret = URL_SAFE.encode(format!("{}:{}", config.identity_username, config.identity_token));
 
@@ -90,23 +89,23 @@ impl AuthentikTokenConnector {
             .request(&http_client);
 
         result.map_err(|e| match e {
-            RequestTokenError::Request(e) => AuthentikError::NetworkError(e),
-            RequestTokenError::ServerResponse(e) => TokenError(e.to_string()),
+            RequestTokenError::Request(e) => OauthError::NetworkError(e),
+            RequestTokenError::ServerResponse(e) => OauthError::TokenError(e.to_string().into()),
             _ => {
                 error!("Unexpected error: {:?}", e);
-                TokenError("Unexpected error".to_string())
+                OauthError::TokenError("Unexpected error".to_string().into())
             }
         })
 
     }
 
-    async fn renew_token(&self) -> Result<(), AuthentikError> {
+    async fn renew_token(&self) -> Result<(), OauthError> {
         let new_token_info = Self::initialize_service().await?;
         *self.token_info.lock().await = new_token_info;
         Ok(())
     }
 
-    async fn get_token(&self) -> Result<String, AuthentikError> {
+    async fn get_token(&self) -> Result<String, OauthError> {
         let token_info = self.token_info.lock().await;
 
         if token_info.expires_at < SystemTime::now() {
