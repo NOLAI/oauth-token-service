@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
 
 #[derive(Debug, thiserror::Error)]
-pub enum OauthError {
+pub enum TokenServiceError {
     #[error(transparent)]
     TokenError(#[from] Box<dyn Error>),
     #[error(transparent)]
@@ -28,45 +28,38 @@ pub struct TokenInfo {
     pub expires_at: SystemTime,
 }
 
-/// A connector to the identity service that auto-renews its token when expired
-#[derive(Debug, Clone)]
-pub struct OauthTokenConnector {
-    token_info: Arc<Mutex<TokenInfo>>,
-}
-
-pub struct AuthentikConfig {
-    pub base_identity_url: String,
-    pub identity_username: String,
-    pub identity_token: String,
+#[derive(Clone, Debug)]
+pub struct TokenServiceConfig {
+    pub identity_service_base_url: String,
+    pub username: String,
+    pub token: String,
     pub client_id: String,
 }
 
-impl OauthTokenConnector {
-    fn get_config() -> AuthentikConfig {
-        AuthentikConfig {
-            base_identity_url: std::env::var("IDENTITY_URL").expect("IDENTITY_URL not set"),
-            identity_username: std::env::var("IDENTITY_USERNAME")
-                .expect("IDENTITY_USERNAME not set"),
-            identity_token: std::env::var("IDENTITY_TOKEN").expect("IDENTITY_TOKEN not set"),
-            client_id: std::env::var("IDENTITY_CLIENT_ID").expect("IDENTITY_CLIENT_ID not set"),
+/// A connector to the identity service that auto-renews its token when expired
+#[derive(Debug, Clone)]
+pub struct TokenService {
+    config: TokenServiceConfig,
+    token_info: Arc<Mutex<Option<TokenInfo>>>,
+}
+
+impl TokenService {
+    pub fn new(config: TokenServiceConfig) -> Self {
+        Self {
+            config,
+            token_info: Arc::new(Mutex::new(None)),
         }
     }
-    pub async fn new() -> Result<Self, OauthError> {
-        let token_info = Self::initialize_service().await?;
-        Ok(Self {
-            token_info: Arc::new(Mutex::new(token_info)),
-        })
-    }
 
-    async fn initialize_service() -> Result<TokenInfo, OauthError> {
-        let token = Self::perform_login().await?;
+    async fn initialize_service(&self) -> Result<TokenInfo, TokenServiceError> {
+        let token = self.perform_login().await?;
 
         let expires_at = SystemTime::now()
             + Duration::from_secs(
                 token
                     .expires_in()
                     .ok_or_else(|| {
-                        OauthError::TokenError("Token has no duration".to_string().into())
+                        TokenServiceError::TokenError("Token has no duration".to_string().into())
                     })?
                     .as_secs(),
             );
@@ -77,21 +70,21 @@ impl OauthTokenConnector {
         })
     }
 
-    async fn perform_login() -> Result<BasicTokenResponse, OauthError> {
-        let config = Self::get_config();
-        let client_secret = URL_SAFE.encode(format!(
-            "{}:{}",
-            config.identity_username, config.identity_token
-        ));
-        let client = BasicClient::new(ClientId::new(config.client_id.clone()))
+    async fn perform_login(&self) -> Result<BasicTokenResponse, TokenServiceError> {
+        let client_secret =
+            URL_SAFE.encode(format!("{}:{}", self.config.username, self.config.token));
+        let client = BasicClient::new(ClientId::new(self.config.client_id.clone()))
             .set_auth_type(RequestBody)
             .set_client_secret(ClientSecret::new(client_secret))
             .set_auth_uri(
-                AuthUrl::new(format!("{}/authorize/", config.base_identity_url))
-                    .expect("Auth URL should be valid"),
+                AuthUrl::new(format!(
+                    "{}/authorize/",
+                    self.config.identity_service_base_url
+                ))
+                .expect("Auth URL should be valid"),
             )
             .set_token_uri(
-                TokenUrl::new(format!("{}/token/", config.base_identity_url))
+                TokenUrl::new(format!("{}/token/", self.config.identity_service_base_url))
                     .expect("Token URL should be valid"),
             );
 
@@ -108,23 +101,25 @@ impl OauthTokenConnector {
             .await;
 
         result.map_err(|e| match e {
-            RequestTokenError::Request(e) => OauthError::NetworkError(e),
-            RequestTokenError::ServerResponse(e) => OauthError::TokenError(e.to_string().into()),
+            RequestTokenError::Request(e) => TokenServiceError::NetworkError(e),
+            RequestTokenError::ServerResponse(e) => {
+                TokenServiceError::TokenError(e.to_string().into())
+            }
             _ => {
                 error!("Unexpected error: {:?}", e);
-                OauthError::TokenError("Unexpected error".to_string().into())
+                TokenServiceError::TokenError("Unexpected error".to_string().into())
             }
         })
     }
 
-    pub async fn get_token(&self) -> Result<String, OauthError> {
+    pub async fn get_token(&self) -> Result<AccessToken, TokenServiceError> {
         let mut token_info = self.token_info.lock().await;
 
-        if token_info.expires_at < SystemTime::now() {
-            let new_token_info = Self::initialize_service().await?;
-            *token_info = new_token_info;
+        if token_info.is_none() || token_info.as_ref().unwrap().expires_at < SystemTime::now() {
+            let new_token_info = self.initialize_service().await?;
+            *token_info = Some(new_token_info);
         }
 
-        Ok(token_info.access_token.secret().clone())
+        Ok(token_info.as_ref().unwrap().access_token.clone())
     }
 }
