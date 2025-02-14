@@ -1,13 +1,16 @@
-use log::{error};
+use base64::engine::general_purpose::URL_SAFE;
+use base64::Engine;
+use log::error;
+use oauth2::basic::{BasicClient, BasicTokenResponse};
+use oauth2::AuthType::RequestBody;
+use oauth2::{
+    reqwest, AccessToken, AuthUrl, ClientId, ClientSecret, HttpClientError, RequestTokenError,
+    Scope, TokenResponse, TokenUrl,
+};
 use std::error::Error;
-use std::fmt::{Debug};
+use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE;
-use oauth2::basic::{BasicClient, BasicTokenResponse};
-use oauth2::{reqwest, AccessToken, AuthUrl, ClientId, ClientSecret, HttpClientError, RequestTokenError, Scope, TokenResponse, TokenUrl};
-use oauth2::AuthType::{BasicAuth, RequestBody};
 use tokio::sync::Mutex;
 
 #[derive(Debug, thiserror::Error)]
@@ -42,7 +45,8 @@ impl OauthTokenConnector {
     fn get_config() -> AuthentikConfig {
         AuthentikConfig {
             base_identity_url: std::env::var("IDENTITY_URL").expect("IDENTITY_URL not set"),
-            identity_username: std::env::var("IDENTITY_USERNAME").expect("IDENTITY_USERNAME not set"),
+            identity_username: std::env::var("IDENTITY_USERNAME")
+                .expect("IDENTITY_USERNAME not set"),
             identity_token: std::env::var("IDENTITY_TOKEN").expect("IDENTITY_TOKEN not set"),
             client_id: std::env::var("IDENTITY_CLIENT_ID").expect("IDENTITY_CLIENT_ID not set"),
         }
@@ -50,17 +54,22 @@ impl OauthTokenConnector {
     pub async fn new() -> Result<Self, OauthError> {
         let token_info = Self::initialize_service().await?;
         Ok(Self {
-            token_info: Arc::new(Mutex::new(token_info))
+            token_info: Arc::new(Mutex::new(token_info)),
         })
     }
 
     async fn initialize_service() -> Result<TokenInfo, OauthError> {
         let token = Self::perform_login().await?;
 
-        let expires_at = SystemTime::now() +
-            Duration::from_secs(token.expires_in()
-                .ok_or_else(|| OauthError::TokenError("Token has no duration".to_string().into()))?
-                .as_secs());
+        let expires_at = SystemTime::now()
+            + Duration::from_secs(
+                token
+                    .expires_in()
+                    .ok_or_else(|| {
+                        OauthError::TokenError("Token has no duration".to_string().into())
+                    })?
+                    .as_secs(),
+            );
 
         Ok(TokenInfo {
             access_token: token.access_token().clone(),
@@ -70,12 +79,21 @@ impl OauthTokenConnector {
 
     async fn perform_login() -> Result<BasicTokenResponse, OauthError> {
         let config = Self::get_config();
-        let client_secret = URL_SAFE.encode(format!("{}:{}", config.identity_username, config.identity_token));
+        let client_secret = URL_SAFE.encode(format!(
+            "{}:{}",
+            config.identity_username, config.identity_token
+        ));
         let client = BasicClient::new(ClientId::new(config.client_id.clone()))
             .set_auth_type(RequestBody)
             .set_client_secret(ClientSecret::new(client_secret))
-            .set_auth_uri(AuthUrl::new(format!("{}/authorize/", config.base_identity_url)).expect("Auth URL should be valid"))
-            .set_token_uri(TokenUrl::new(format!("{}/token/", config.base_identity_url)).expect("Token URL should be valid"));
+            .set_auth_uri(
+                AuthUrl::new(format!("{}/authorize/", config.base_identity_url))
+                    .expect("Auth URL should be valid"),
+            )
+            .set_token_uri(
+                TokenUrl::new(format!("{}/token/", config.base_identity_url))
+                    .expect("Token URL should be valid"),
+            );
 
         let http_client = reqwest::ClientBuilder::new()
             // Following redirects opens the client up to SSRF vulnerabilities.
@@ -86,7 +104,8 @@ impl OauthTokenConnector {
         let result = client
             .exchange_client_credentials()
             .add_scope(Scope::new("profile".to_string()))
-            .request_async(&http_client).await;
+            .request_async(&http_client)
+            .await;
 
         result.map_err(|e| match e {
             RequestTokenError::Request(e) => OauthError::NetworkError(e),
@@ -96,7 +115,6 @@ impl OauthTokenConnector {
                 OauthError::TokenError("Unexpected error".to_string().into())
             }
         })
-
     }
 
     async fn renew_token(&self) -> Result<(), OauthError> {
