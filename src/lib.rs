@@ -71,7 +71,6 @@ impl OauthTokenConnector {
     async fn perform_login() -> Result<BasicTokenResponse, OauthError> {
         let config = Self::get_config();
         let client_secret = URL_SAFE.encode(format!("{}:{}", config.identity_username, config.identity_token));
-        println!("SECRET: {}", client_secret);
         let client = BasicClient::new(ClientId::new(config.client_id.clone()))
             .set_auth_type(RequestBody)
             .set_client_secret(ClientSecret::new(client_secret))
