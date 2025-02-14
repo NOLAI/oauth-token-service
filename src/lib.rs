@@ -117,20 +117,14 @@ impl OauthTokenConnector {
         })
     }
 
-    async fn renew_token(&self) -> Result<(), OauthError> {
-        let new_token_info = Self::initialize_service().await?;
-        *self.token_info.lock().await = new_token_info;
-        Ok(())
-    }
-
     pub async fn get_token(&self) -> Result<String, OauthError> {
-        let token_info = self.token_info.lock().await;
+        let mut token_info = self.token_info.lock().await;
 
         if token_info.expires_at < SystemTime::now() {
-            drop(token_info);
-            self.renew_token().await?;
+            let new_token_info = Self::initialize_service().await?;
+            *token_info = new_token_info;
         }
 
-        Ok(self.token_info.lock().await.access_token.secret().clone())
+        Ok(token_info.access_token.secret().clone())
     }
 }
