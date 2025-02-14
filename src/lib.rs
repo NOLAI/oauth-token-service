@@ -3,11 +3,11 @@ use std::error::Error;
 use std::fmt::{Debug};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE;
 use oauth2::basic::{BasicClient, BasicTokenResponse};
 use oauth2::{reqwest, AccessToken, AuthUrl, ClientId, ClientSecret, HttpClientError, RequestTokenError, Scope, TokenResponse, TokenUrl};
+use oauth2::AuthType::{BasicAuth, RequestBody};
 use tokio::sync::Mutex;
 
 #[derive(Debug, thiserror::Error)]
@@ -71,13 +71,14 @@ impl OauthTokenConnector {
     async fn perform_login() -> Result<BasicTokenResponse, OauthError> {
         let config = Self::get_config();
         let client_secret = URL_SAFE.encode(format!("{}:{}", config.identity_username, config.identity_token));
-
+        println!("SECRET: {}", client_secret);
         let client = BasicClient::new(ClientId::new(config.client_id.clone()))
+            .set_auth_type(RequestBody)
             .set_client_secret(ClientSecret::new(client_secret))
             .set_auth_uri(AuthUrl::new(format!("{}/authorize/", config.base_identity_url)).expect("Auth URL should be valid"))
             .set_token_uri(TokenUrl::new(format!("{}/token/", config.base_identity_url)).expect("Token URL should be valid"));
 
-        let http_client = reqwest::blocking::ClientBuilder::new()
+        let http_client = reqwest::ClientBuilder::new()
             // Following redirects opens the client up to SSRF vulnerabilities.
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -86,7 +87,7 @@ impl OauthTokenConnector {
         let result = client
             .exchange_client_credentials()
             .add_scope(Scope::new("profile".to_string()))
-            .request(&http_client);
+            .request_async(&http_client).await;
 
         result.map_err(|e| match e {
             RequestTokenError::Request(e) => OauthError::NetworkError(e),
@@ -105,7 +106,7 @@ impl OauthTokenConnector {
         Ok(())
     }
 
-    async fn get_token(&self) -> Result<String, OauthError> {
+    pub async fn get_token(&self) -> Result<String, OauthError> {
         let token_info = self.token_info.lock().await;
 
         if token_info.expires_at < SystemTime::now() {

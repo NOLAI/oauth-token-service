@@ -1,5 +1,5 @@
 [package]
-name = "authentik_token_connector"
+name = "oauth-token-connector"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
