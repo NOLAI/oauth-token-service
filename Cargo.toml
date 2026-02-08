@@ -16,7 +16,7 @@ readme = "README.md"
 [dependencies]
 oauth2 = { version = "5.0.0", features = ["reqwest", "rustls-tls", "reqwest-blocking"] }
 base64 = "0.22.1"
-thiserror = "1.0.69"
+thiserror = "2.0.0"
 tokio = {version = "1", features = ["full"]}
 log = "0.4.25"
 
