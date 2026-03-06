@@ -1,6 +1,6 @@
 [package]
 name = "oauth-token-service"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 authors = [
@@ -16,9 +16,9 @@ readme = "README.md"
 [dependencies]
 oauth2 = { version = "5.0.0", features = ["reqwest", "rustls-tls", "reqwest-blocking"] }
 base64 = "0.22.1"
-thiserror = "1.0.69"
+thiserror = "2.0.18"
 tokio = {version = "1", features = ["full"]}
-log = "0.4.25"
+log = "0.4"
 
 [dev-dependencies]
-mockito = "1.2"
+mockito = "1.7"
