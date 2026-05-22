@@ -19,7 +19,7 @@ Add this to your Cargo.toml:
 
 ```toml
 [dependencies]
-oauth_token_service = "0.1.0"
+oauth_token_service = "0.1.2"
 ```
 
 ### Quick start
